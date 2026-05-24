@@ -2,7 +2,7 @@ import { EventEmitter } from 'events';
 import { query } from '../db';
 import { logger } from '../logger';
 import { getOrCreateWallet, deductStake, creditWinnings } from './wallet.service';
-import { getGamesWithOdds } from './games.service';
+import { getGamesService } from './games.service';
 
 interface AutoBetSettings {
   enabled: boolean;
@@ -53,8 +53,10 @@ class AutoBetService extends EventEmitter {
       );
       if (usersRes.rows.length === 0) return;
 
-      // Fetch current arb opportunities
-      const games = await getGamesWithOdds();
+      // Fetch current arb opportunities — always bypass cache so odds are fresh
+      const svc = getGamesService();
+      svc.invalidateCache();
+      const games = await svc.getGamesWithOdds();
       const arbGames = games.filter((g) => g.hasArb && g.arbRoi !== null && g.arbRoi > 0);
       if (arbGames.length === 0) return;
 
@@ -114,17 +116,45 @@ class AutoBetService extends EventEmitter {
           });
 
           try {
+            // Re-validate with a second fresh fetch right before placing
+            // This ensures the arb window hasn't closed in the last few seconds
+            const freshGames = await getGamesService().getGamesWithOdds();
+            const freshGame = freshGames.find((g) => g.id === game.id);
+            if (!freshGame?.hasArb || (freshGame.arbRoi ?? 0) < settings.minRoi) {
+              logger.info(`[auto-bet] Arb closed before placement for ${game.eventName} — skipping`);
+              continue;
+            }
+
+            // Recalculate with fresh odds
+            const freshImplied = freshGame.outcomes.reduce((s, o) => {
+              const best = o.books.find((b) => b.isBest);
+              return best ? s + 1 / best.decimalOdds : s;
+            }, 0);
+            const freshProfit = totalStake * (1 / freshImplied - 1);
+            const freshLegs = freshGame.outcomes.map((o) => {
+              const best = o.books.find((b) => b.isBest)!;
+              return {
+                outcomeName: o.name,
+                bookmaker: best.bookmaker,
+                bookmakerLabel: best.bookmakerLabel,
+                decimalOdds: best.decimalOdds,
+                americanOdds: best.americanOdds,
+                legStake: Math.round(totalStake * (1 / best.decimalOdds) / freshImplied * 100) / 100,
+                betUrl: best.betUrl ?? null,
+              };
+            });
+
             await this.placeBet(userId, game.id, {
-              eventName: game.eventName,
-              sport: game.sport,
-              roi: game.arbRoi!,
+              eventName: freshGame.eventName,
+              sport: freshGame.sport,
+              roi: freshGame.arbRoi!,
               totalStake,
-              guaranteedProfit,
-              legs,
+              guaranteedProfit: freshProfit,
+              legs: freshLegs,
               isDemo: settings.demoMode,
             });
             alreadyBet.add(game.id);
-            this.emit('bet_placed', { userId, game, totalStake, guaranteedProfit, isDemo: settings.demoMode });
+            this.emit('bet_placed', { userId, game: freshGame, totalStake, guaranteedProfit: freshProfit, isDemo: settings.demoMode });
           } catch (err) {
             logger.error(`[auto-bet] Failed to place bet for user ${userId}`, { error: (err as Error).message });
           }

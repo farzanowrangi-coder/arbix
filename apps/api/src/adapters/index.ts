@@ -40,6 +40,11 @@ export const ADAPTER_REGISTRY: Record<BookmakerSlug, AdapterConstructor | null> 
   bovada: null,
   mybookie: null,
   betonline: null,
+  espn_bet: null,
+  kalshi: null,
+  williamhill: null,
+  unibet: null,
+  bwin: null,
 };
 
 export function createAdapter(slug: BookmakerSlug): BaseAdapter | null {

@@ -64,7 +64,37 @@ const BOOK_DISPLAY: Record<string, string> = {
   pinnacle:   'Pinnacle',
   espn_bet:   'DraftKings (ESPN)',
   kalshi:     'Kalshi',
+  williamhill: 'William Hill',
+  unibet:     'Unibet',
+  bwin:       'Bwin',
 };
+
+// Bovada sport path per league name
+const BOVADA_PATHS: Record<string, string> = {
+  NBA:        'basketball/nba',
+  NHL:        'ice-hockey/nhl',
+  MLB:        'baseball/mlb',
+  EPL:        'soccer/england/premier-league',
+  'La Liga':  'soccer/spain/la-liga',
+  Bundesliga: 'soccer/germany/german-bundesliga',
+  'Serie A':  'soccer/italy/serie-a',
+  'Ligue 1':  'soccer/france/french-ligue-1',
+};
+
+// FanDuel competition IDs
+const FANDUEL_COMPETITIONS: { competitionId: number; league: string }[] = [
+  { competitionId: 42133, league: 'NBA' },
+  { competitionId: 42401, league: 'NHL' },
+  { competitionId: 42573, league: 'MLB' },
+  { competitionId: 10932509, league: 'EPL' },
+];
+
+// BetMGM sport/league IDs
+const BETMGM_LEAGUES: { sportId: number; leagueId: number; league: string }[] = [
+  { sportId: 7,  leagueId: 4850,  league: 'NBA' },
+  { sportId: 10, leagueId: 4316,  league: 'NHL' },
+  { sportId: 23, leagueId: 11093, league: 'MLB' },
+];
 
 // Kalshi per-game series tickers (open game markets with binary Yes/No per outcome)
 const KALSHI_SERIES: { ticker: string }[] = [
@@ -209,16 +239,23 @@ export class GamesService {
   private cache: { data: GameOddsEntry[]; expiresAt: number } | null = null;
   private readonly CACHE_TTL = 60_000;
 
+  invalidateCache() {
+    this.cache = null;
+  }
+
   async getGamesWithOdds(): Promise<GameOddsEntry[]> {
     if (this.cache && this.cache.expiresAt > Date.now()) return this.cache.data;
 
     const oddsApiKey = process.env['ODDS_API_KEY'] ?? '';
 
-    const [pinnacleGames, espnMap, oddsApiGames, kalshiEvents] = await Promise.all([
+    const [pinnacleGames, espnMap, oddsApiGames, kalshiEvents, bovadaGames, fanDuelGames, betMgmGames] = await Promise.all([
       this.fetchPinnacle(),
       this.fetchEspn(),
       oddsApiKey ? this.fetchOddsApi(oddsApiKey) : Promise.resolve(new Map<string, Map<string, { bookmaker: string; american: number; betUrl?: string }[]>>()),
       this.fetchKalshi(),
+      this.fetchBovada(),
+      this.fetchFanDuel(),
+      this.fetchBetMgm(),
     ]);
 
     // game key → {meta, outcomeMap}
@@ -299,7 +336,35 @@ export class GamesService {
       }
     }
 
-    // ── 4. Kalshi (prediction market — match by significant word overlap) ──────
+    // ── 4. Bovada ─────────────────────────────────────────────────────────────
+    for (const g of bovadaGames) {
+      const k = gameKey(g.awayTeam, g.homeTeam);
+      if (!gameMap.has(k)) continue; // only enrich existing games
+      const entry = gameMap.get(k)!;
+      for (const o of g.outcomes) {
+        addOdds(entry.outcomes, o.name, 'bovada', o.americanOdds, `https://www.bovada.lv/sports/${BOVADA_PATHS[entry.league] ?? ''}`);
+      }
+    }
+
+    // ── 5. FanDuel ────────────────────────────────────────────────────────────
+    for (const [k, outcomes] of fanDuelGames) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomes) {
+        addOdds(entry.outcomes, name, 'fanduel', american, 'https://sportsbook.fanduel.com');
+      }
+    }
+
+    // ── 6. BetMGM ─────────────────────────────────────────────────────────────
+    for (const [k, outcomes] of betMgmGames) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomes) {
+        addOdds(entry.outcomes, name, 'betmgm', american, 'https://sports.betmgm.com');
+      }
+    }
+
+    // ── 7. Kalshi (prediction market — match by significant word overlap) ──────
     // Kalshi uses short names: "VGK Golden Knights", "New York", "COL Avalanche"
     // Strategy: an outcome matches a team if they share at least one significant word (>3 chars)
     const sigWords = (name: string) =>
@@ -751,6 +816,175 @@ export class GamesService {
     );
 
     logger.debug(`[games] Kalshi: ${result.size} events fetched`);
+    return result;
+  }
+
+  // ─── Bovada ────────────────────────────────────────────────────────────────
+
+  private async fetchBovada(): Promise<{ awayTeam: string; homeTeam: string; league: string; outcomes: { name: string; americanOdds: number }[] }[]> {
+    const results: ReturnType<GamesService['fetchBovada']> extends Promise<infer T> ? T : never = [];
+
+    await Promise.all(
+      Object.entries(BOVADA_PATHS).map(async ([league, path]) => {
+        try {
+          const url = `https://www.bovada.lv/services/sports/event/coupon/events/A/description/${path}?marketFilterId=rank&preMatchOnly=false&eventsLimit=50&lang=en`;
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+            signal: AbortSignal.timeout(8_000),
+          });
+          if (!res.ok) return;
+          const data = await res.json() as any[];
+
+          for (const group of data ?? []) {
+            for (const ev of group.events ?? []) {
+              const comps: any[] = ev.competitors ?? [];
+              const home = comps.find((c: any) => c.home);
+              const away = comps.find((c: any) => !c.home);
+              if (!home || !away) continue;
+              if (ev.live && (ev.clock?.relativeGameTimeInSecs ?? 0) > 7200) continue;
+
+              const moneyline = (ev.displayGroups as any[])
+                ?.flatMap((g: any) => g.markets ?? [])
+                ?.find((m: any) => /moneyline/i.test(m.description ?? ''));
+              if (!moneyline) continue;
+
+              const outcomes: { name: string; americanOdds: number }[] = [];
+              for (const o of moneyline.outcomes ?? []) {
+                const american = parseInt((o.price?.american ?? '').replace('+', ''), 10);
+                if (isNaN(american) || american === 0) continue;
+                const name = o.description === 'Draw' ? 'Draw' : (o.description as string);
+                outcomes.push({ name, americanOdds: american });
+              }
+              if (outcomes.length >= 2) {
+                (results as any[]).push({ awayTeam: away.name, homeTeam: home.name, league, outcomes });
+              }
+            }
+          }
+        } catch (err) {
+          logger.debug(`[games] Bovada ${league}: ${(err as Error).message}`);
+        }
+      }),
+    );
+
+    logger.debug(`[games] Bovada: ${results.length} games`);
+    return results as any;
+  }
+
+  // ─── FanDuel ───────────────────────────────────────────────────────────────
+
+  private async fetchFanDuel(): Promise<Map<string, Map<string, number>>> {
+    // gameKey → outcomeName → americanOdds
+    const result = new Map<string, Map<string, number>>();
+    const AK = 'FhMFpcPWXMeyZxOx';
+
+    await Promise.all(
+      FANDUEL_COMPETITIONS.map(async ({ competitionId, league }) => {
+        try {
+          const url = `https://sbapi.fanduel.com/api/content-managed-page?page=SPORT_EVENT_COMPETITION&competitionId=${competitionId}&_ak=${AK}&includeOutrights=false`;
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', Origin: 'https://sportsbook.fanduel.com' },
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) return;
+          const data = await res.json() as any;
+
+          const attachedMarkets: any[] = data.attachedMarkets ?? [];
+          const events: any[] = data.events ?? [];
+
+          for (const ev of events) {
+            const runners: any[] = ev.runners ?? [];
+            const home = runners.find((r: any) => r.runnerRole === 'HOME' || r.handicap === 0);
+            const away = runners.find((r: any) => r.runnerRole === 'AWAY');
+            if (!home || !away) continue;
+
+            const homeName = home.runnerName as string;
+            const awayName = away.runnerName as string;
+            const k = gameKey(awayName, homeName);
+            if (!result.has(k)) result.set(k, new Map());
+            const outcomeMap = result.get(k)!;
+
+            // Find h2h market from attached markets for this event
+            const evMarkets = attachedMarkets.filter((m: any) =>
+              m.eventId === ev.eventId && /match winner|money line|moneyline|1x2/i.test(m.marketType ?? m.marketName ?? '')
+            );
+            for (const mkt of evMarkets) {
+              for (const sel of mkt.runners ?? []) {
+                const price = parseFloat(sel.winRunnerOdds?.americanDisplayOdds ?? '');
+                if (isNaN(price)) continue;
+                const name = sel.runnerName === 'Draw' ? 'Draw' : (sel.runnerName as string);
+                outcomeMap.set(name, Math.round(price));
+              }
+            }
+          }
+          logger.debug(`[games] FanDuel ${league}: ${result.size} games`);
+        } catch (err) {
+          logger.debug(`[games] FanDuel ${league}: ${(err as Error).message}`);
+        }
+      }),
+    );
+
+    return result;
+  }
+
+  // ─── BetMGM ────────────────────────────────────────────────────────────────
+
+  private async fetchBetMgm(): Promise<Map<string, Map<string, number>>> {
+    const result = new Map<string, Map<string, number>>();
+
+    await Promise.all(
+      BETMGM_LEAGUES.map(async ({ sportId, leagueId, league }) => {
+        try {
+          const url = `https://sports.betmgm.com/en/sports/api/fixtures/fixture-list?sportId=${sportId}&leagueId=${leagueId}&marketTypeIds=1_0_2_3&fixture-types=Standard&format=json`;
+          const res = await fetch(url, {
+            headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json', Referer: 'https://sports.betmgm.com' },
+            signal: AbortSignal.timeout(10_000),
+          });
+          if (!res.ok) return;
+          const data = await res.json() as any;
+
+          const fixtures: any[] = data.fixtures ?? data.Fixtures ?? [];
+          for (const fx of fixtures) {
+            const participants: any[] = fx.participants ?? fx.Participants ?? [];
+            const home = participants.find((p: any) => (p.position ?? p.Position) === 1);
+            const away = participants.find((p: any) => (p.position ?? p.Position) === 2);
+            if (!home || !away) continue;
+
+            const homeName = (home.name?.value ?? home.Name ?? '') as string;
+            const awayName = (away.name?.value ?? away.Name ?? '') as string;
+            if (!homeName || !awayName) continue;
+
+            const k = gameKey(awayName, homeName);
+            if (!result.has(k)) result.set(k, new Map());
+            const outcomeMap = result.get(k)!;
+
+            // Find moneyline market (marketId=1 is usually moneyline)
+            const markets: any[] = fx.markets ?? fx.Markets ?? [];
+            const ml = markets.find((m: any) => [1, 2].includes(m.marketType ?? m.MarketType ?? -1));
+            if (!ml) continue;
+
+            const selections: any[] = ml.selections ?? ml.Selections ?? [];
+            for (const sel of selections) {
+              const price = sel.trueOdds ?? sel.TrueOdds ?? sel.nativeOdds ?? sel.NativeOdds;
+              if (!price) continue;
+              const decimal = parseFloat(price);
+              if (isNaN(decimal) || decimal <= 1) continue;
+              const american = decimalToAmerican(decimal);
+              const name = (sel.name?.value ?? sel.Name ?? '') as string;
+              if (!name || name === 'Draw') { if (name === 'Draw') outcomeMap.set('Draw', american); continue; }
+              // Match by home/away position
+              const pos = sel.participantPosition ?? sel.ParticipantPosition;
+              if (pos === 1) outcomeMap.set(homeName, american);
+              else if (pos === 2) outcomeMap.set(awayName, american);
+              else outcomeMap.set(name, american);
+            }
+          }
+          logger.debug(`[games] BetMGM ${league}: enriched`);
+        } catch (err) {
+          logger.debug(`[games] BetMGM ${league}: ${(err as Error).message}`);
+        }
+      }),
+    );
+
     return result;
   }
 }

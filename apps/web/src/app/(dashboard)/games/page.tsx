@@ -18,24 +18,35 @@ const SPORT_ICON: Record<string, string> = {
 };
 
 const BOOK_LABEL: Record<string, string> = {
-  pinnacle:   'Pinnacle',
-  espn_bet:   'ESPN Bet',
-  draftkings: 'DraftKings',
-  fanduel:    'FanDuel',
-  betmgm:     'BetMGM',
-  polymarket: 'Polymarket',
-  kalshi:     'Kalshi',
-  odds_api:   'Aggregated',
+  pinnacle:    'Pinnacle',
+  espn_bet:    'ESPN Bet',
+  draftkings:  'DraftKings',
+  fanduel:     'FanDuel',
+  betmgm:      'BetMGM',
+  caesars:     'Caesars',
+  bet365:      'Bet365',
+  betrivers:   'BetRivers',
+  polymarket:  'Polymarket',
+  kalshi:      'Kalshi',
+  bovada:      'Bovada',
+  williamhill: 'William Hill',
+  unibet:      'Unibet',
+  bwin:        'Bwin',
+  odds_api:    'Aggregated',
 };
 
 const BOOK_COLOR: Record<string, string> = {
-  pinnacle:   'text-blue-400',
-  espn_bet:   'text-red-400',
-  draftkings: 'text-indigo-400',
-  fanduel:    'text-teal-400',
-  betmgm:     'text-yellow-400',
-  polymarket: 'text-purple-400',
-  kalshi:     'text-cyan-400',
+  pinnacle:    'text-blue-400',
+  espn_bet:    'text-red-400',
+  draftkings:  'text-indigo-400',
+  fanduel:     'text-teal-400',
+  betmgm:      'text-yellow-400',
+  polymarket:  'text-purple-400',
+  kalshi:      'text-cyan-400',
+  bovada:      'text-orange-400',
+  williamhill: 'text-sky-400',
+  unibet:      'text-green-400',
+  bwin:        'text-rose-400',
 };
 
 const BOOK_URL: Record<string, string> = {

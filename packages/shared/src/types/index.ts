@@ -33,7 +33,11 @@ export type BookmakerSlug =
   | 'betway'
   | 'betrivers'
   | 'odds_api'
-  | 'espn_bet';
+  | 'espn_bet'
+  | 'kalshi'
+  | 'williamhill'
+  | 'unibet'
+  | 'bwin';
 
 export type SubscriptionTier = 'free' | 'basic' | 'pro';
 export type NotificationChannel = 'browser' | 'telegram' | 'discord' | 'email' | 'sms';
