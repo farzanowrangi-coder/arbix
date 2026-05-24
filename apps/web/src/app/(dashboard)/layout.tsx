@@ -14,6 +14,7 @@ const NAV = [
   { href: '/games',         label: 'Best Odds',    icon: '⊕' },
   { href: '/live',          label: 'Live Matches', icon: '▶' },
   { href: '/opportunities', label: 'Opportunities', icon: '◉' },
+  { href: '/auto-bet',      label: 'Auto-Bettor',  icon: '◉' },
   { href: '/calculator',    label: 'Calculator',   icon: '◆' },
   { href: '/history',       label: 'History',      icon: '◎' },
   { href: '/portfolio',     label: 'Portfolio',    icon: '◍' },

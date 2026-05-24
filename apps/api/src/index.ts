@@ -19,6 +19,10 @@ import { subscriptionRoutes } from './routes/subscription';
 import { userRoutes } from './routes/user';
 import { liveRoutes } from './routes/live';
 import { gamesRoutes } from './routes/games';
+import { walletRoutes } from './routes/wallet';
+import { credentialsRoutes } from './routes/credentials';
+import { autoBetRoutes } from './routes/auto-bet';
+import { getAutoBetService } from './services/auto-bet.service';
 
 async function buildApp() {
   const app = Fastify({
@@ -80,6 +84,9 @@ async function buildApp() {
   app.register(userRoutes,         { prefix: '/user' }); // legacy alias
   app.register(liveRoutes,         { prefix: '/live' });
   app.register(gamesRoutes,        { prefix: '/games' });
+  app.register(walletRoutes,       { prefix: '/wallet' });
+  app.register(credentialsRoutes,  { prefix: '/credentials' });
+  app.register(autoBetRoutes,      { prefix: '/auto-bet' });
 
   // History endpoint (forwards to arbitrage history query)
   app.get('/history', { preHandler: [(req: any, reply: any) => scanner && req.jwtVerify().catch(() => reply.code(401).send({ success: false, error: 'Unauthorized' }))] }, async (req: any, reply) => {
@@ -168,6 +175,9 @@ async function main() {
     const liveScanner = getLiveScanner();
     liveScanner.on('ws:broadcast', (event) => wsManager.broadcast(event));
     liveScanner.start();
+
+    const autoBet = getAutoBetService();
+    autoBet.start();
 
     // Start server
     await app.listen({ port: config.port, host: config.host });

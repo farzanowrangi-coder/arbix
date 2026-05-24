@@ -286,6 +286,65 @@ export const gamesApi = {
   },
 };
 
+// ─── Wallet ──────────────────────────────────────────────────────────────────
+
+export const walletApi = {
+  getBalance: async () => {
+    const res = await apiClient.get<ApiResponse<{ balance: number; isDemo: boolean }>>('/wallet/balance');
+    return res.data;
+  },
+  deposit: async (amount: number) => {
+    const res = await apiClient.post<ApiResponse<{ balance: number }>>('/wallet/deposit', { amount });
+    return res.data;
+  },
+  setDemoMode: async (isDemo: boolean) => {
+    const res = await apiClient.post<ApiResponse<null>>('/wallet/demo-mode', { isDemo });
+    return res.data;
+  },
+  getTransactions: async () => {
+    const res = await apiClient.get<ApiResponse<any[]>>('/wallet/transactions');
+    return res.data;
+  },
+};
+
+// ─── Credentials ─────────────────────────────────────────────────────────────
+
+export const credentialsApi = {
+  list: async () => {
+    const res = await apiClient.get<ApiResponse<any[]>>('/credentials');
+    return res.data;
+  },
+  save: async (bookmaker: string, login: string, password: string) => {
+    const res = await apiClient.post<ApiResponse<null>>('/credentials', { bookmaker, login, password });
+    return res.data;
+  },
+  remove: async (bookmaker: string) => {
+    const res = await apiClient.delete<ApiResponse<null>>(`/credentials/${bookmaker}`);
+    return res.data;
+  },
+};
+
+// ─── Auto-Bet ─────────────────────────────────────────────────────────────────
+
+export const autoBetApi = {
+  getSettings: async () => {
+    const res = await apiClient.get<ApiResponse<any>>('/auto-bet/settings');
+    return res.data;
+  },
+  saveSettings: async (settings: any) => {
+    const res = await apiClient.put<ApiResponse<any>>('/auto-bet/settings', settings);
+    return res.data;
+  },
+  getHistory: async () => {
+    const res = await apiClient.get<ApiResponse<any[]>>('/auto-bet/history');
+    return res.data;
+  },
+  getStats: async () => {
+    const res = await apiClient.get<ApiResponse<any>>('/auto-bet/stats');
+    return res.data;
+  },
+};
+
 // ─── Live ─────────────────────────────────────────────────────────────────────
 
 export const liveApi = {

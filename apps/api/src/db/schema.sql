@@ -141,3 +141,80 @@ DROP TRIGGER IF EXISTS set_users_updated_at ON users;
 CREATE TRIGGER set_users_updated_at
   BEFORE UPDATE ON users
   FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+-- ─── Wallet ───────────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS wallet (
+  id         UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id    UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  balance    NUMERIC(12, 2) NOT NULL DEFAULT 0,
+  is_demo    BOOLEAN NOT NULL DEFAULT TRUE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE TABLE IF NOT EXISTS wallet_transactions (
+  id            UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id       UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  type          VARCHAR(20) NOT NULL CHECK (type IN ('deposit', 'withdrawal', 'bet_placed', 'bet_won', 'bet_refund')),
+  amount        NUMERIC(12, 2) NOT NULL,
+  balance_after NUMERIC(12, 2) NOT NULL,
+  description   TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_user_id ON wallet_transactions(user_id);
+CREATE INDEX IF NOT EXISTS idx_wallet_transactions_created_at ON wallet_transactions(created_at DESC);
+
+-- ─── Bookmaker Credentials ───────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS bookmaker_credentials (
+  id                 UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id            UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  bookmaker          VARCHAR(50) NOT NULL,
+  encrypted_login    TEXT NOT NULL,
+  encrypted_password TEXT NOT NULL,
+  is_active          BOOLEAN NOT NULL DEFAULT TRUE,
+  last_verified      TIMESTAMPTZ,
+  created_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(user_id, bookmaker)
+);
+
+CREATE INDEX IF NOT EXISTS idx_bookmaker_creds_user_id ON bookmaker_credentials(user_id);
+
+-- ─── Auto-Bet Settings ───────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS auto_bet_settings (
+  id             UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id        UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+  enabled        BOOLEAN NOT NULL DEFAULT FALSE,
+  demo_mode      BOOLEAN NOT NULL DEFAULT TRUE,
+  max_stake_pct  NUMERIC(5, 2) NOT NULL DEFAULT 5.0,
+  min_roi        NUMERIC(5, 2) NOT NULL DEFAULT 1.0,
+  max_stake_abs  NUMERIC(12, 2) NOT NULL DEFAULT 500.0,
+  bankroll_floor NUMERIC(12, 2) NOT NULL DEFAULT 100.0,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+-- ─── Auto-Bet Log ────────────────────────────────────────────────────────────
+
+CREATE TABLE IF NOT EXISTS auto_bets (
+  id                UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  user_id           UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  game_id           TEXT NOT NULL,
+  event_name        TEXT NOT NULL,
+  sport             VARCHAR(50) NOT NULL,
+  roi               NUMERIC(8, 4) NOT NULL,
+  total_stake       NUMERIC(12, 2) NOT NULL,
+  guaranteed_profit NUMERIC(12, 2) NOT NULL,
+  legs              JSONB NOT NULL DEFAULT '[]',
+  is_demo           BOOLEAN NOT NULL DEFAULT TRUE,
+  status            VARCHAR(20) NOT NULL DEFAULT 'placed'
+                      CHECK (status IN ('placed', 'failed', 'settled')),
+  placed_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  settled_at        TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS idx_auto_bets_user_id ON auto_bets(user_id);
+CREATE INDEX IF NOT EXISTS idx_auto_bets_placed_at ON auto_bets(placed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_auto_bets_game_id ON auto_bets(game_id);
