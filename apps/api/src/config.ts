@@ -31,7 +31,7 @@ function optionalBool(key: string, defaultValue: boolean): boolean {
 
 export const config = {
   env: optional('NODE_ENV', 'development') as 'development' | 'production' | 'test',
-  port: optionalNumber('PORT', 3001),
+  port: optionalNumber('PORT', 3002),
   host: optional('HOST', '0.0.0.0'),
 
   // Database
