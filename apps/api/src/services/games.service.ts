@@ -44,10 +44,8 @@ const LEAGUES: LeagueCfg[] = [
   { id: 1984, sport: 'soccer',     name: 'Serie A',     espnSport: 'soccer',     espnLeague: 'ita.1',       oddsApiKey: 'soccer_italy_serie_a',hasDraw: true },
   { id: 1985, sport: 'soccer',     name: 'Ligue 1',     espnSport: 'soccer',     espnLeague: 'fra.1',       oddsApiKey: 'soccer_france_ligue_one',hasDraw:true },
   { id: 2921, sport: 'soccer',     name: 'World Cup',   espnSport: 'soccer',     espnLeague: 'fifa.world',  oddsApiKey: 'soccer_fifa_world_cup',hasDraw: true },
-  // Tennis uses ESPN groupings structure — Pinnacle IDs are fetched dynamically
-  { id: 0, sport: 'tennis', name: 'ATP',         espnSport: 'tennis', espnLeague: 'atp',          oddsApiKey: 'tennis_atp', isTennis: true },
-  { id: 0, sport: 'tennis', name: 'WTA',         espnSport: 'tennis', espnLeague: 'wta',          oddsApiKey: 'tennis_wta', isTennis: true },
-  { id: 0, sport: 'tennis', name: 'French Open', espnSport: 'tennis', espnLeague: 'french-open',  isTennis: true },
+  // Tennis: French Open only (ATP + WTA). Expand to Masters 1000+ when season continues.
+  { id: 0, sport: 'tennis', name: 'French Open', espnSport: 'tennis', espnLeague: 'french-open', oddsApiKey: 'tennis_atp', isTennis: true },
 ];
 
 const BOOK_DISPLAY: Record<string, string> = {
@@ -474,10 +472,12 @@ export class GamesService {
     let tennisLeagues: TennisLeagueRef[] = [];
     try {
       const raw = await this.pinnacleGet<any[]>('/sports/33/leagues?all=false');
+      // French Open only for now. To expand: also allow /Masters|ATP 1000|WTA 1000/i
+      const TENNIS_ALLOW = /roland.garros|french.open/i;
       tennisLeagues = (raw ?? [])
-        .filter((l: any) => l.matchupCount > 0 && l.matchupCount <= 50)
+        .filter((l: any) => l.matchupCount > 0 && TENNIS_ALLOW.test(l.name as string))
         .map((l: any) => ({ id: l.id as number, name: l.name as string }));
-      logger.debug(`[games] Pinnacle tennis: ${tennisLeagues.length} active leagues`);
+      logger.debug(`[games] Pinnacle tennis: ${tennisLeagues.length} active leagues (French Open filter)`);
     } catch {
       logger.debug('[games] Could not fetch Pinnacle tennis leagues');
     }

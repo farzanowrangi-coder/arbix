@@ -287,7 +287,7 @@ export default function GamesPage() {
     if (sport === 'NHL') return g.league === 'NHL';
     if (sport === 'MLB') return g.league === 'MLB';
     if (sport === 'Soccer') return ['EPL', 'La Liga', 'Bundesliga', 'Serie A', 'Ligue 1', 'World Cup'].includes(g.league);
-    if (sport === 'Tennis') return g.sport === 'tennis';
+    if (sport === 'Tennis') return g.sport === 'tennis' && /french.open/i.test(g.league);
     return true;
   };
 
