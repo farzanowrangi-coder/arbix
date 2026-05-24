@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "baseUrl": ".",
+    "paths": {
+      "@arbix/shared": ["../../packages/shared/src"],
+      "@arbix/odds-engine": ["../../packages/odds-engine/src"]
+    }
+  },
+  "include": ["src/**/*", "../../packages/shared/src/**/*", "../../packages/odds-engine/src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}
