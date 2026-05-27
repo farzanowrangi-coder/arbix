@@ -37,7 +37,9 @@ export type BookmakerSlug =
   | 'kalshi'
   | 'williamhill'
   | 'unibet'
-  | 'bwin';
+  | 'bwin'
+  | 'pointsbet'
+  | 'sportsinteraction';
 
 export type SubscriptionTier = 'free' | 'basic' | 'pro';
 export type NotificationChannel = 'browser' | 'telegram' | 'discord' | 'email' | 'sms';
@@ -211,6 +213,7 @@ export type WsEventType =
   | 'scanner:status'
   | 'live:match'
   | 'live:opportunity'
+  | 'games:update'
   | 'ping'
   | 'pong';
 

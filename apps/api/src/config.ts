@@ -139,7 +139,7 @@ export const config = {
 
   // Rate limiting
   rateLimit: {
-    max: optionalNumber('RATE_LIMIT_MAX', 100),
+    max: optionalNumber('RATE_LIMIT_MAX', 1000),
     windowMs: optionalNumber('RATE_LIMIT_WINDOW_MS', 60000),
   },
 

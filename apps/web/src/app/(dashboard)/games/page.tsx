@@ -5,6 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { gamesApi, type GameOddsEntry, type GameOutcome } from '@/lib/api';
 import ArbCalculator, { type ArbLeg } from '@/components/ui/ArbCalculator';
 import { useOddsFormat } from '@/context/OddsFormatContext';
+import { useOpportunityStore } from '@/store';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -18,35 +19,65 @@ const SPORT_ICON: Record<string, string> = {
 };
 
 const BOOK_LABEL: Record<string, string> = {
-  pinnacle:    'Pinnacle',
-  espn_bet:    'ESPN Bet',
-  draftkings:  'DraftKings',
-  fanduel:     'FanDuel',
-  betmgm:      'BetMGM',
-  caesars:     'Caesars',
-  bet365:      'Bet365',
-  betrivers:   'BetRivers',
-  polymarket:  'Polymarket',
-  kalshi:      'Kalshi',
-  bovada:      'Bovada',
-  williamhill: 'William Hill',
-  unibet:      'Unibet',
-  bwin:        'Bwin',
-  odds_api:    'Aggregated',
+  pinnacle:          'Pinnacle',
+  espn_bet:          'ESPN Bet',
+  draftkings:        'DraftKings',
+  fanduel:           'FanDuel',
+  betmgm:            'BetMGM',
+  caesars:           'Caesars',
+  bet365:            'Bet365',
+  betrivers:         'BetRivers',
+  pointsbet:         'PointsBet',
+  polymarket:        'Polymarket',
+  kalshi:            'Kalshi',
+  bovada:            'Bovada',
+  stake:             'Stake',
+  betway:            'Betway',
+  sportsinteraction: 'SportsInteraction',
+  williamhill:       'William Hill',
+  unibet:            'Unibet',
+  bwin:              'Bwin',
+  odds_api:          'Aggregated',
 };
 
+// All selectable books for the filter panel
+const SELECTABLE_BOOKS: { slug: string; label: string; color: string }[] = [
+  { slug: 'pinnacle',          label: 'Pinnacle',          color: 'text-blue-400'   },
+  { slug: 'draftkings',        label: 'DraftKings',        color: 'text-indigo-400' },
+  { slug: 'fanduel',           label: 'FanDuel',           color: 'text-teal-400'   },
+  { slug: 'betmgm',            label: 'BetMGM',            color: 'text-yellow-400' },
+  { slug: 'caesars',           label: 'Caesars',           color: 'text-amber-400'  },
+  { slug: 'bet365',            label: 'Bet365',            color: 'text-lime-400'   },
+  { slug: 'betrivers',         label: 'BetRivers',         color: 'text-violet-400' },
+  { slug: 'pointsbet',         label: 'PointsBet',         color: 'text-pink-400'   },
+  { slug: 'polymarket',        label: 'Polymarket',        color: 'text-purple-400' },
+  { slug: 'kalshi',            label: 'Kalshi',            color: 'text-cyan-400'   },
+  { slug: 'bovada',            label: 'Bovada',            color: 'text-orange-400' },
+  { slug: 'stake',             label: 'Stake',             color: 'text-emerald-400'},
+  { slug: 'betway',            label: 'Betway',            color: 'text-green-400'  },
+  { slug: 'sportsinteraction', label: 'SportsInteraction', color: 'text-sky-400'    },
+  { slug: 'unibet',            label: 'Unibet',            color: 'text-green-400'  },
+];
+
 const BOOK_COLOR: Record<string, string> = {
-  pinnacle:    'text-blue-400',
-  espn_bet:    'text-red-400',
-  draftkings:  'text-indigo-400',
-  fanduel:     'text-teal-400',
-  betmgm:      'text-yellow-400',
-  polymarket:  'text-purple-400',
-  kalshi:      'text-cyan-400',
-  bovada:      'text-orange-400',
-  williamhill: 'text-sky-400',
-  unibet:      'text-green-400',
-  bwin:        'text-rose-400',
+  pinnacle:          'text-blue-400',
+  espn_bet:          'text-red-400',
+  draftkings:        'text-indigo-400',
+  fanduel:           'text-teal-400',
+  betmgm:            'text-yellow-400',
+  caesars:           'text-amber-400',
+  bet365:            'text-lime-400',
+  betrivers:         'text-violet-400',
+  pointsbet:         'text-pink-400',
+  polymarket:        'text-purple-400',
+  kalshi:            'text-cyan-400',
+  bovada:            'text-orange-400',
+  stake:             'text-emerald-400',
+  betway:            'text-green-400',
+  sportsinteraction: 'text-sky-400',
+  williamhill:       'text-sky-400',
+  unibet:            'text-green-400',
+  bwin:              'text-rose-400',
 };
 
 const BOOK_URL: Record<string, string> = {
@@ -59,6 +90,44 @@ const BOOK_URL: Record<string, string> = {
 };
 
 const ALL_SPORTS = ['All', 'NBA', 'NHL', 'MLB', 'Soccer', 'Tennis'];
+
+// ─── Book-filter helper ───────────────────────────────────────────────────────
+
+function filterGameByBooks(game: GameOddsEntry, selectedBooks: Set<string>): GameOddsEntry | null {
+  const filteredOutcomes: GameOutcome[] = [];
+
+  for (const outcome of game.outcomes) {
+    const filteredBooks = outcome.books.filter((b) => selectedBooks.has(b.bookmaker));
+    if (filteredBooks.length === 0) continue;
+    const best = filteredBooks.reduce((a, b) => b.decimalOdds > a.decimalOdds ? b : a);
+    filteredOutcomes.push({
+      ...outcome,
+      books: filteredBooks.map((b) => ({
+        ...b,
+        isBest: b.bookmaker === best.bookmaker && b.decimalOdds === best.decimalOdds,
+      })),
+      bestBook: best.bookmaker,
+      bestBookLabel: best.bookmakerLabel,
+      bestDecimalOdds: best.decimalOdds,
+      bestAmericanOdds: best.americanOdds,
+    });
+  }
+
+  if (filteredOutcomes.length < 2) return null;
+
+  const uniqueBooks = new Set(filteredOutcomes.flatMap((o) => o.books.map((b) => b.bookmaker)));
+  const totalImplied = filteredOutcomes.reduce((s, o) => s + 1 / o.bestDecimalOdds, 0);
+  const hasArb = uniqueBooks.size >= 2 && totalImplied < 1.0;
+  const arbRoi = hasArb ? Math.round(((1 - totalImplied) / totalImplied) * 10000) / 100 : null;
+
+  return {
+    ...game,
+    outcomes: filteredOutcomes,
+    hasArb,
+    arbRoi,
+    totalImplied: Math.round(totalImplied * 10000) / 10000,
+  };
+}
 
 function formatAmerican(n: number): string {
   return n > 0 ? `+${n}` : `${n}`;
@@ -233,11 +302,47 @@ function GameCard({ game }: { game: GameOddsEntry }) {
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function GamesPage() {
+  const wsGamesData = useOpportunityStore((s) => s.gamesData);
+  const wsGamesUpdatedAt = useOpportunityStore((s) => s.gamesUpdatedAt);
   const [games, setGames] = useState<GameOddsEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsAgo, setSecondsAgo] = useState(0);
   const [sport, setSport] = useState('All');
+  const [selectedBooks, setSelectedBooks] = useState<Set<string>>(
+    new Set(SELECTABLE_BOOKS.map((b) => b.slug)),
+  );
+  const [showBookFilter, setShowBookFilter] = useState(false);
   const notifPermRef = useRef(false);
+  const prevArbIdsRef = useRef<Set<string>>(new Set());
+
+  // Primary: consume WS-pushed games data the moment it arrives
+  useEffect(() => {
+    if (!wsGamesData || wsGamesData.length === 0) return;
+    const incoming = wsGamesData as GameOddsEntry[];
+    // Browser notifications for new arbs
+    for (const g of incoming) {
+      if (g.hasArb && !prevArbIdsRef.current.has(g.id) && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+        new Notification('⚡ Arbitrage Found!', {
+          body: `${g.eventName} — ${g.arbRoi?.toFixed(2)}% ROI (${g.isLive ? 'LIVE' : 'Pre-game'})`,
+          icon: '/favicon.ico',
+          tag: g.id,
+        });
+      }
+    }
+    prevArbIdsRef.current = new Set(incoming.filter((g) => g.hasArb).map((g) => g.id));
+    setGames(incoming);
+    setLastUpdated(wsGamesUpdatedAt ?? new Date());
+    setIsLoading(false);
+  }, [wsGamesData, wsGamesUpdatedAt]);
+
+  // Tick seconds-ago counter every second
+  useEffect(() => {
+    const t = setInterval(() => {
+      setSecondsAgo(lastUpdated ? Math.round((Date.now() - lastUpdated.getTime()) / 1000) : 0);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [lastUpdated]);
 
   // Request browser notification permission once
   useEffect(() => {
@@ -248,15 +353,16 @@ export default function GamesPage() {
     }
   }, []);
 
+  // Fallback: HTTP poll (fires if WS is down or data not yet pushed)
   const fetchGames = useCallback(async () => {
     try {
       const res = await gamesApi.getUpcoming();
       if (res.success && res.data) {
+        // Only apply if WS hasn't given us fresher data
         setGames((prev) => {
-          // Notify on new arbs
-          const prevArbIds = new Set(prev.filter((g) => g.hasArb).map((g) => g.id));
+          if (wsGamesUpdatedAt && lastUpdated && wsGamesUpdatedAt >= lastUpdated) return prev;
           for (const g of res.data!) {
-            if (g.hasArb && !prevArbIds.has(g.id) && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+            if (g.hasArb && !prevArbIdsRef.current.has(g.id) && typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
               new Notification('⚡ Arbitrage Found!', {
                 body: `${g.eventName} — ${g.arbRoi?.toFixed(2)}% ROI (${g.isLive ? 'LIVE' : 'Pre-game'})`,
                 icon: '/favicon.ico',
@@ -264,22 +370,32 @@ export default function GamesPage() {
               });
             }
           }
+          prevArbIdsRef.current = new Set(res.data!.filter((g) => g.hasArb).map((g) => g.id));
           return res.data!;
         });
-        setLastUpdated(new Date());
+        setLastUpdated((prev) => {
+          if (wsGamesUpdatedAt && wsGamesUpdatedAt > (prev ?? new Date(0))) return prev;
+          return new Date();
+        });
       }
-    } catch {
-      /* ignore */
-    } finally {
+    } catch { /* ignore */ } finally {
       setIsLoading(false);
     }
-  }, []);
+  }, [wsGamesUpdatedAt, lastUpdated]);
 
   useEffect(() => {
-    fetchGames();
-    const t = setInterval(fetchGames, 60_000);
+    fetchGames(); // initial load
+    const t = setInterval(fetchGames, 15_000); // fallback poll
     return () => clearInterval(t);
   }, [fetchGames]);
+
+  const toggleBook = (slug: string) => {
+    setSelectedBooks((prev) => {
+      const next = new Set(prev);
+      if (next.has(slug)) { next.delete(slug); } else { next.add(slug); }
+      return next;
+    });
+  };
 
   const sportFilter = (g: GameOddsEntry): boolean => {
     if (sport === 'All') return true;
@@ -291,7 +407,11 @@ export default function GamesPage() {
     return true;
   };
 
-  const filtered = games.filter(sportFilter);
+  const filtered = games
+    .filter(sportFilter)
+    .map((g) => filterGameByBooks(g, selectedBooks))
+    .filter((g): g is GameOddsEntry => g !== null);
+
   const liveGames = filtered.filter((g) => g.isLive && !g.isCompleted);
   const upcomingGames = filtered.filter((g) => !g.isLive && !g.isCompleted);
   const recentGames = filtered.filter((g) => g.isCompleted);
@@ -304,13 +424,13 @@ export default function GamesPage() {
         <div>
           <h1 className="text-sm font-bold text-text-primary">Best Odds</h1>
           <p className="text-2xs text-text-muted mt-0.5">
-            Moneyline comparison across Pinnacle &amp; ESPN Bet · updates every 60s
+            Moneyline comparison across Pinnacle &amp; ESPN Bet · updates every 15s
           </p>
         </div>
         <div className="flex items-center gap-3">
           {lastUpdated && (
-            <span className="text-2xs text-text-muted">
-              {lastUpdated.toLocaleTimeString()}
+            <span className={`text-2xs ${secondsAgo <= 5 ? 'text-green-arb' : secondsAgo <= 15 ? 'text-text-muted' : 'text-yellow-arb'}`}>
+              {secondsAgo === 0 ? 'just now' : `${secondsAgo}s ago`}
             </span>
           )}
           <button
@@ -337,6 +457,75 @@ export default function GamesPage() {
             {s}
           </button>
         ))}
+      </div>
+
+      {/* Book selector */}
+      <div className="border border-border rounded-lg overflow-hidden">
+        <button
+          onClick={() => setShowBookFilter((v) => !v)}
+          className="w-full flex items-center justify-between px-4 py-2.5 bg-panel hover:bg-panel/80 transition-colors"
+        >
+          <div className="flex items-center gap-2">
+            <span className="text-2xs font-semibold text-text-primary uppercase tracking-widest">Sportsbooks</span>
+            <span className="text-2xs text-text-muted">
+              ({selectedBooks.size} of {SELECTABLE_BOOKS.length} selected)
+            </span>
+          </div>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={(e) => { e.stopPropagation(); setSelectedBooks(new Set(SELECTABLE_BOOKS.map((b) => b.slug))); }}
+              className="text-2xs text-text-muted hover:text-green-arb transition-colors"
+            >
+              All
+            </button>
+            <button
+              onClick={(e) => { e.stopPropagation(); setSelectedBooks(new Set()); }}
+              className="text-2xs text-text-muted hover:text-red-400 transition-colors"
+            >
+              None
+            </button>
+            <svg
+              className={`w-3.5 h-3.5 text-text-muted transition-transform ${showBookFilter ? 'rotate-180' : ''}`}
+              fill="none" viewBox="0 0 24 24" stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </div>
+        </button>
+
+        <AnimatePresence>
+          {showBookFilter && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.15 }}
+              className="overflow-hidden"
+            >
+              <div className="px-4 py-3 border-t border-border flex flex-wrap gap-2">
+                {SELECTABLE_BOOKS.map((book) => {
+                  const active = selectedBooks.has(book.slug);
+                  return (
+                    <button
+                      key={book.slug}
+                      onClick={() => toggleBook(book.slug)}
+                      className={`flex items-center gap-1.5 px-2.5 py-1 rounded border text-2xs font-medium transition-all ${
+                        active
+                          ? `border-current ${book.color} bg-current/10`
+                          : 'border-border text-text-muted hover:border-border/80'
+                      }`}
+                    >
+                      <span className={`w-2 h-2 rounded-sm border flex-shrink-0 transition-colors ${
+                        active ? `bg-current border-transparent ${book.color}` : 'border-border'
+                      }`} />
+                      <span className={active ? book.color : ''}>{book.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Arb alert bar */}

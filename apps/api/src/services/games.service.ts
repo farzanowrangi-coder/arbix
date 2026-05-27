@@ -12,7 +12,31 @@
  */
 
 import type { SportCategory } from '@arbix/shared';
+import axios from 'axios';
+import { HttpsProxyAgent } from 'https-proxy-agent';
+import { SocksProxyAgent } from 'socks-proxy-agent';
 import { logger } from '../logger';
+import { getAnyCredentials } from './credentials.service';
+
+function stakeAgent() {
+  const url = process.env.STAKE_PROXY_URL;
+  if (!url) return undefined;
+  return url.startsWith('socks') ? new SocksProxyAgent(url) : new HttpsProxyAgent(url);
+}
+
+async function stakeGql(body: object, token: string): Promise<any> {
+  const agent = stakeAgent();
+  const res = await axios.post('https://stake.com/_api/graphql', body, {
+    headers: {
+      'Content-Type': 'application/json',
+      'x-access-token': token,
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    },
+    httpsAgent: agent,
+    timeout: 10_000,
+  });
+  return res.data;
+}
 
 const PINNACLE_BASE = 'https://guest.api.arcadia.pinnacle.com/0.1';
 const PINNACLE_HEADERS = {
@@ -49,34 +73,38 @@ const LEAGUES: LeagueCfg[] = [
 ];
 
 const BOOK_DISPLAY: Record<string, string> = {
-  draftkings: 'DraftKings',
-  fanduel:    'FanDuel',
-  betmgm:     'BetMGM',
-  caesars:    'Caesars',
-  bet365:     'Bet365',
-  betrivers:  'BetRivers',
-  pointsbet:  'PointsBet',
-  bovada:     'Bovada',
-  mybookie:   'MyBookie',
-  betonline:  'BetOnline',
-  pinnacle:   'Pinnacle',
-  espn_bet:   'DraftKings (ESPN)',
-  kalshi:     'Kalshi',
-  williamhill: 'William Hill',
-  unibet:     'Unibet',
-  bwin:       'Bwin',
+  draftkings:        'DraftKings',
+  fanduel:           'FanDuel',
+  betmgm:            'BetMGM',
+  caesars:           'Caesars',
+  bet365:            'Bet365',
+  betrivers:         'BetRivers',
+  pointsbet:         'PointsBet',
+  bovada:            'Bovada',
+  mybookie:          'MyBookie',
+  betonline:         'BetOnline',
+  pinnacle:          'Pinnacle',
+  espn_bet:          'DraftKings (ESPN)',
+  kalshi:            'Kalshi',
+  polymarket:        'Polymarket',
+  stake:             'Stake',
+  betway:            'Betway',
+  sportsinteraction: 'SportsInteraction',
+  williamhill:       'William Hill',
+  unibet:            'Unibet',
+  bwin:              'Bwin',
 };
 
-// Bovada sport path per league name
-const BOVADA_PATHS: Record<string, string> = {
-  NBA:        'basketball/nba',
-  NHL:        'ice-hockey/nhl',
-  MLB:        'baseball/mlb',
-  EPL:        'soccer/england/premier-league',
-  'La Liga':  'soccer/spain/la-liga',
-  Bundesliga: 'soccer/germany/german-bundesliga',
-  'Serie A':  'soccer/italy/serie-a',
-  'Ligue 1':  'soccer/france/french-ligue-1',
+// Bovada sport path per league name (try playoffs path first, fall back to regular)
+const BOVADA_PATHS: Record<string, string[]> = {
+  NBA:        ['basketball/nba-playoffs', 'basketball/nba'],
+  NHL:        ['ice-hockey/nhl-playoffs', 'ice-hockey/nhl'],
+  MLB:        ['baseball/mlb'],
+  EPL:        ['soccer/england/premier-league'],
+  'La Liga':  ['soccer/spain/la-liga'],
+  Bundesliga: ['soccer/germany/german-bundesliga'],
+  'Serie A':  ['soccer/italy/serie-a'],
+  'Ligue 1':  ['soccer/france/french-ligue-1'],
 };
 
 // FanDuel competition IDs
@@ -235,7 +263,26 @@ function computeArb(outcomes: GameOutcome[], hasDraw: boolean): { hasArb: boolea
 
 export class GamesService {
   private cache: { data: GameOddsEntry[]; expiresAt: number } | null = null;
-  private readonly CACHE_TTL = 60_000;
+  private readonly CACHE_TTL = 15_000;
+  private refreshTimer: ReturnType<typeof setInterval> | null = null;
+  private refreshing = false;
+
+  // Start background pre-fetch loop — keeps cache warm every 10s so requests never block on a cold fetch
+  startBackgroundRefresh() {
+    if (this.refreshTimer) return;
+    this.refreshTimer = setInterval(() => { this.refreshCache(); }, 10_000);
+    this.refreshCache(); // warm immediately on start
+  }
+
+  stopBackgroundRefresh() {
+    if (this.refreshTimer) { clearInterval(this.refreshTimer); this.refreshTimer = null; }
+  }
+
+  private async refreshCache() {
+    if (this.refreshing) return; // skip if a fetch is already in flight
+    this.refreshing = true;
+    try { await this.buildGamesWithOdds(); } catch { /* keep old cache on error */ } finally { this.refreshing = false; }
+  }
 
   invalidateCache() {
     this.cache = null;
@@ -243,10 +290,15 @@ export class GamesService {
 
   async getGamesWithOdds(): Promise<GameOddsEntry[]> {
     if (this.cache && this.cache.expiresAt > Date.now()) return this.cache.data;
+    // Cache miss — fetch synchronously so this request doesn't return stale/empty
+    return this.buildGamesWithOdds();
+  }
+
+  private async buildGamesWithOdds(): Promise<GameOddsEntry[]> {
 
     const oddsApiKey = process.env['ODDS_API_KEY'] ?? '';
 
-    const [pinnacleGames, espnMap, oddsApiGames, kalshiEvents, bovadaGames, fanDuelGames, betMgmGames] = await Promise.all([
+    const [pinnacleGames, espnMap, oddsApiGames, kalshiEvents, bovadaGames, fanDuelGames, betMgmGames, polymarketEvents, betRiversGames, unibetGames, pointsBetGames, stakeGames, sportsInteractionGames, bet365Games] = await Promise.all([
       this.fetchPinnacle(),
       this.fetchEspn(),
       oddsApiKey ? this.fetchOddsApi(oddsApiKey) : Promise.resolve(new Map<string, Map<string, { bookmaker: string; american: number; betUrl?: string }[]>>()),
@@ -254,6 +306,13 @@ export class GamesService {
       this.fetchBovada(),
       this.fetchFanDuel(),
       this.fetchBetMgm(),
+      this.fetchPolymarket(),
+      this.fetchKambi('betrivers'),
+      this.fetchKambi('unibet'),
+      this.fetchPointsBet(),
+      this.fetchStake(),
+      this.fetchSportsInteraction(),
+      this.fetchBet365(),
     ]);
 
     // game key → {meta, outcomeMap}
@@ -340,7 +399,7 @@ export class GamesService {
       if (!gameMap.has(k)) continue; // only enrich existing games
       const entry = gameMap.get(k)!;
       for (const o of g.outcomes) {
-        addOdds(entry.outcomes, o.name, 'bovada', o.americanOdds, `https://www.bovada.lv/sports/${BOVADA_PATHS[entry.league] ?? ''}`);
+        addOdds(entry.outcomes, o.name, 'bovada', o.americanOdds, `https://www.bovada.lv/sports/${(BOVADA_PATHS[entry.league] ?? [''])[0]}`);
       }
     }
 
@@ -378,17 +437,21 @@ export class GamesService {
       // Require date alignment: Kalshi occurrence must be within 24h of game startTime
       const kalshiOccurrence = eventMarkets.find((m) => m.occurrenceAt > 0)?.occurrenceAt ?? 0;
 
-      // Exclude Draw/Tie outcomes from non-soccer markets for this pass
+      // Exclude Draw/Tie and futures-style outcomes
       const outcomeMarkets = eventMarkets.filter((m) => {
         const low = m.outcomeName.toLowerCase();
-        return low !== 'draw' && low !== 'tie';
+        if (low === 'draw' || low === 'tie') return false;
+        // Reject outcomes that look like futures ("wins series", "conference winner", etc.)
+        if (/\b(wins|winner|champion|advance|qualify|series|conference|division|group)\b/i.test(m.outcomeName)) return false;
+        return true;
       });
       const drawMarket = eventMarkets.find((m) => {
         const low = m.outcomeName.toLowerCase();
         return low === 'draw' || low === 'tie';
       });
 
-      if (outcomeMarkets.length < 2) continue;
+      // Game markets have exactly 2 participants (3 with Draw); futures have 4+ — reject those
+      if (outcomeMarkets.length < 2 || outcomeMarkets.length > 3) continue;
 
       // Try to find a game where BOTH outcomes match different teams AND dates align
       for (const [, entry] of gameMap) {
@@ -413,6 +476,114 @@ export class GamesService {
           addOdds(entry.outcomes, 'Draw', 'kalshi', drawMarket.americanOdds, drawMarket.betUrl);
         }
         break; // matched — move to next Kalshi event
+      }
+    }
+
+    // ── 8. Polymarket (prediction market — same sigWords matching as Kalshi) ───
+    for (const [, eventOutcomes] of polymarketEvents) {
+      // fetchPolymarket already enforces exactly 2-3 outcomes and date-slug guard
+      if (eventOutcomes.length < 2 || eventOutcomes.length > 3) continue;
+      const startDate = eventOutcomes[0].startDate;
+
+      const outcomeMarkets = eventOutcomes.filter((m) => {
+        const low = m.outcomeName.toLowerCase();
+        return low !== 'draw' && low !== 'tie';
+      });
+      const drawMarket = eventOutcomes.find((m) => {
+        const low = m.outcomeName.toLowerCase();
+        return low === 'draw' || low === 'tie';
+      });
+      if (outcomeMarkets.length < 2 || outcomeMarkets.length > 2) continue; // exactly 2 non-draw outcomes
+
+      for (const [, entry] of gameMap) {
+        if (startDate > 0 && entry.startTime) {
+          const gameTime = new Date(entry.startTime).getTime();
+          if (Math.abs(startDate - gameTime) > 24 * 60 * 60_000) continue;
+        }
+        const homeMatches = outcomeMarkets.filter((m) => teamMatchesKalshi(entry.homeTeam, m.outcomeName));
+        const awayMatches = outcomeMarkets.filter((m) => teamMatchesKalshi(entry.awayTeam, m.outcomeName));
+        if (homeMatches.length === 0 || awayMatches.length === 0) continue;
+        const homeM = homeMatches[0];
+        const awayM = awayMatches[0];
+        if (homeM === awayM) continue;
+
+        addOdds(entry.outcomes, entry.homeTeam, 'polymarket', homeM.americanOdds, homeM.betUrl);
+        addOdds(entry.outcomes, entry.awayTeam, 'polymarket', awayM.americanOdds, awayM.betUrl);
+        if (drawMarket && entry.hasDraw) {
+          addOdds(entry.outcomes, 'Draw', 'polymarket', drawMarket.americanOdds, drawMarket.betUrl);
+        }
+        break;
+      }
+    }
+
+    // ── 9. BetRivers (Kambi) ──────────────────────────────────────────────────
+    for (const [k, outcomeMap] of betRiversGames) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomeMap) {
+        addOdds(entry.outcomes, name, 'betrivers', american, 'https://www.betrivers.com');
+      }
+    }
+
+    // ── 10. Unibet (Kambi) ────────────────────────────────────────────────────
+    for (const [k, outcomeMap] of unibetGames) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomeMap) {
+        addOdds(entry.outcomes, name, 'unibet', american, 'https://www.unibet.com');
+      }
+    }
+
+    // ── 11. PointsBet ─────────────────────────────────────────────────────────
+    for (const [k, outcomeMap] of pointsBetGames) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomeMap) {
+        addOdds(entry.outcomes, name, 'pointsbet', american, 'https://us.pointsbet.com');
+      }
+    }
+
+    // ── 12. Stake (credential-based — active when credentials saved) ──────────
+    for (const [, eventOutcomes] of stakeGames) {
+      if (eventOutcomes.length < 2) continue;
+      const startDate = eventOutcomes[0].startDate;
+      const outcomeMarkets = eventOutcomes.filter((m) => {
+        const low = m.outcomeName.toLowerCase();
+        return low !== 'draw' && low !== 'tie';
+      });
+      const drawMarket = eventOutcomes.find((m) => ['draw', 'tie'].includes(m.outcomeName.toLowerCase()));
+      if (outcomeMarkets.length < 2) continue;
+
+      for (const [, entry] of gameMap) {
+        if (startDate > 0 && entry.startTime) {
+          const gameTime = new Date(entry.startTime).getTime();
+          if (Math.abs(startDate - gameTime) > 24 * 60 * 60_000) continue;
+        }
+        const homeM = outcomeMarkets.find((m) => teamMatchesKalshi(entry.homeTeam, m.outcomeName));
+        const awayM = outcomeMarkets.find((m) => teamMatchesKalshi(entry.awayTeam, m.outcomeName));
+        if (!homeM || !awayM || homeM === awayM) continue;
+        addOdds(entry.outcomes, entry.homeTeam, 'stake', homeM.americanOdds, homeM.betUrl);
+        addOdds(entry.outcomes, entry.awayTeam, 'stake', awayM.americanOdds, awayM.betUrl);
+        if (drawMarket && entry.hasDraw) addOdds(entry.outcomes, 'Draw', 'stake', drawMarket.americanOdds, drawMarket.betUrl);
+        break;
+      }
+    }
+
+    // ── 13. SportsInteraction (credential-based) ──────────────────────────────
+    for (const [k, outcomeMap] of sportsInteractionGames) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomeMap) {
+        addOdds(entry.outcomes, name, 'sportsinteraction', american, 'https://www.sportsinteraction.com');
+      }
+    }
+
+    // ── 14. Bet365 (direct website API) ──────────────────────────────────────
+    for (const [k, outcomeMap] of bet365Games) {
+      if (!gameMap.has(k)) continue;
+      const entry = gameMap.get(k)!;
+      for (const [name, american] of outcomeMap) {
+        addOdds(entry.outcomes, name, 'bet365', american, 'https://www.bet365.com');
       }
     }
 
@@ -825,15 +996,22 @@ export class GamesService {
     const results: ReturnType<GamesService['fetchBovada']> extends Promise<infer T> ? T : never = [];
 
     await Promise.all(
-      Object.entries(BOVADA_PATHS).map(async ([league, path]) => {
+      Object.entries(BOVADA_PATHS).map(async ([league, paths]) => {
         try {
-          const url = `https://www.bovada.lv/services/sports/event/coupon/events/A/description/${path}?marketFilterId=rank&preMatchOnly=false&eventsLimit=50&lang=en`;
-          const res = await fetch(url, {
-            headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
-            signal: AbortSignal.timeout(8_000),
-          });
-          if (!res.ok) return;
-          const data = await res.json() as any[];
+          // Try each path until we get at least one event
+          let data: any[] = [];
+          for (const path of paths) {
+            const url = `https://www.bovada.lv/services/sports/event/coupon/events/A/description/${path}?marketFilterId=rank&preMatchOnly=false&eventsLimit=50&lang=en`;
+            const res = await fetch(url, {
+              headers: { 'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36', Accept: 'application/json' },
+              signal: AbortSignal.timeout(8_000),
+            });
+            if (!res.ok) continue;
+            const d = await res.json() as any[];
+            const total = (d ?? []).reduce((s: number, g: any) => s + (g.events?.length ?? 0), 0);
+            if (total > 0) { data = d; break; }
+          }
+          if (data.length === 0) return;
 
           for (const group of data ?? []) {
             for (const ev of group.events ?? []) {
@@ -987,10 +1165,392 @@ export class GamesService {
 
     return result;
   }
+
+  // ─── Polymarket (gamma API — prediction market, per-team binary markets) ──
+
+  private async fetchPolymarket(): Promise<Map<string, { outcomeName: string; americanOdds: number; betUrl: string; startDate: number }[]>> {
+    const result = new Map<string, { outcomeName: string; americanOdds: number; betUrl: string; startDate: number }[]>();
+    const tags = ['nba', 'nhl', 'mlb', 'soccer', 'tennis'];
+
+    await Promise.all(tags.map(async (tag) => {
+      try {
+        const url = `https://gamma-api.polymarket.com/events?active=true&closed=false&limit=200&tag_slug=${tag}`;
+        const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+        if (!res.ok) return;
+        const events = await res.json() as any[];
+
+        for (const ev of events ?? []) {
+          const markets: any[] = ev.markets ?? [];
+          if (markets.length === 0) continue;
+
+          // Skip events that have already ended
+          if (ev.endDate && new Date(ev.endDate as string).getTime() < Date.now() - 3 * 60 * 60_000) continue;
+
+          // ── Guard 1: must have gameStartTime (futures/props never do) ──────────
+          const gameStartRaw: string | null = markets[0]?.gameStartTime ?? null;
+          if (!gameStartRaw) continue;
+          const startDate = new Date(gameStartRaw).getTime();
+
+          // ── Guard 2: event slug must contain a calendar date ─────────────────
+          // Game market slugs follow: sport-teamA-teamB-YYYY-MM-DD
+          // Futures (conference winner, group winner) never have a date in the slug
+          const slug: string = ev.slug ?? '';
+          if (!/\d{4}-\d{2}-\d{2}/.test(slug)) continue;
+
+          // ── Guard 3: event title must not contain futures-market keywords ─────
+          const eventTitle = ((ev.title ?? ev.question ?? '') as string).toLowerCase();
+          const FUTURES_TITLE = /\b(winner|champion|championship|advance|qualif|group\s+stage|conference\s+winner|division\s+winner|series\s+winner|to\s+win\s+the|cup\s+winner|playoff\s+winner|who\s+will\s+win\s+the)\b/;
+          if (FUTURES_TITLE.test(eventTitle)) continue;
+
+          // Derive the correct bet URL — sports game markets use /sports/{series}/{slug}
+          const seriesTicker: string = ev.series?.[0]?.ticker ?? '';
+          const betUrl = seriesTicker && slug
+            ? `https://polymarket.com/sports/${seriesTicker}/${slug}`
+            : `https://polymarket.com/event/${slug}`;
+
+          const outcomeList: { outcomeName: string; americanOdds: number; betUrl: string; startDate: number }[] = [];
+
+          // Game market: single market with team names as outcomes
+          const mkt = markets[0];
+          let outcomes: string[] = [];
+          let prices: string[] = [];
+          try { outcomes = JSON.parse(mkt.outcomes ?? '[]') as string[]; } catch { continue; }
+          try { prices = JSON.parse(mkt.outcomePrices ?? '[]') as string[]; } catch { continue; }
+
+          // Pre-game sanity check: if any outcome is >85% that's a live/nearly-settled game — skip
+          const allProbs = prices.map((p: string) => parseFloat(p)).filter((p: number) => !isNaN(p));
+          if (allProbs.some((p: number) => p > 0.85)) continue;
+
+          for (let i = 0; i < Math.min(outcomes.length, prices.length); i++) {
+            const name = (outcomes[i] ?? '').trim();
+            if (!name || name === 'Yes' || name === 'No' || name === 'TBD' || name.includes('(')) continue;
+            // Skip outcome names that look like futures outcomes
+            if (/\b(wins|winner|champion|advance|qualify|series|conference|division|group)\b/i.test(name)) continue;
+            const prob = parseFloat(prices[i] ?? '0');
+            if (!prob || prob <= 0.02 || prob >= 0.98) continue;
+            outcomeList.push({ outcomeName: name, americanOdds: decimalToAmerican(1 / prob), betUrl, startDate });
+          }
+
+          // ── Guard 4: game markets have exactly 2 outcomes (3 for soccer with Draw) ──
+          // Conference/group winners have 4+ outcomes; reject anything with more than 3
+          if (outcomeList.length < 2 || outcomeList.length > 3) continue;
+
+          if (outcomeList.length >= 2) result.set(ev.id as string, outcomeList);
+        }
+      } catch (err) {
+        logger.debug(`[games] Polymarket ${tag}: ${(err as Error).message}`);
+      }
+    }));
+
+    logger.debug(`[games] Polymarket: ${result.size} events`);
+    return result;
+  }
+
+  // ─── Kambi (BetRivers, Unibet — gameKey-based enrichment) ─────────────────
+
+  private async fetchKambi(operator: 'betrivers' | 'unibet'): Promise<Map<string, Map<string, number>>> {
+    const result = new Map<string, Map<string, number>>();
+    const KAMBI_BASE = 'https://eu-offering-api.kambi.com/offering/api/v2';
+    const sportPaths = ['basketball/nba', 'ice_hockey/nhl', 'baseball/mlb'];
+
+    await Promise.all(sportPaths.map(async (sportPath) => {
+      try {
+        const url = `${KAMBI_BASE}/${operator}/listView/${sportPath}.json?lang=en_US&market=US&client_id=2&channel_id=1`;
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return;
+        const data = await res.json() as any;
+
+        for (const evt of data.events ?? []) {
+          const ev = evt.event;
+          if (!ev) continue;
+
+          // Skip stale events
+          const start = new Date(ev.start as string);
+          if (start < new Date(Date.now() - 3 * 60 * 60_000)) continue;
+
+          // Find moneyline / match winner bet offer
+          const betOffers: any[] = evt.betOffers ?? [];
+          const ml = betOffers.find((bo: any) => {
+            const typeName = ((bo.betOfferType?.name ?? '') as string).toLowerCase();
+            const criterion = ((bo.criterion?.label ?? '') as string).toLowerCase();
+            return typeName.includes('winner') || criterion.includes('match') || criterion.includes('winner') || criterion.includes('money');
+          });
+          if (!ml) continue;
+
+          const outcomes: any[] = ml.outcomes ?? [];
+          const teamOutcomes: { name: string; american: number }[] = [];
+
+          for (const o of outcomes) {
+            if ((o.status as string) === 'SUSPENDED') continue;
+            const rawOdds = o.odds as number;
+            if (!rawOdds || rawOdds <= 1010) continue; // < 1.010 decimal
+            const decOdds = rawOdds / 1000;
+            const american = decimalToAmerican(decOdds);
+            const label = ((o.label ?? o.participant ?? '') as string).trim();
+            if (!label) continue;
+            const name = (o.type as string) === 'OT_CROSS' ? 'Draw' : label;
+            teamOutcomes.push({ name, american });
+          }
+
+          if (teamOutcomes.length < 2) continue;
+
+          // Build gameKey from the two non-draw outcomes' labels
+          const teams = teamOutcomes.filter((o) => o.name !== 'Draw');
+          if (teams.length < 2) continue;
+          const k = gameKey(teams[0].name, teams[1].name);
+
+          if (!result.has(k)) result.set(k, new Map());
+          const outcomeMap = result.get(k)!;
+          for (const o of teamOutcomes) {
+            outcomeMap.set(o.name, o.american);
+          }
+        }
+      } catch (err) {
+        logger.debug(`[games] Kambi ${operator} ${sportPath}: ${(err as Error).message}`);
+      }
+    }));
+
+    logger.debug(`[games] Kambi ${operator}: ${result.size} games`);
+    return result;
+  }
+
+  // ─── Bet365 (via The Odds API — same key as fetchOddsApi, filtered to bet365) ─
+  // Bet365's website returns 403 from server IPs (Cloudflare). The only working
+  // path is The Odds API. When ODDS_API_KEY has quota, bet365 already appears
+  // automatically through fetchOddsApi() step 3. This method is a no-op stub
+  // so the Promise.all slot stays in place without breaking the destructure.
+  private async fetchBet365(): Promise<Map<string, Map<string, number>>> {
+    return new Map();
+  }
+
+  // ─── Stake (credential-based GraphQL — requires saved login) ─────────────
+  // Public endpoints confirmed to need auth: sport().fixtureList.markets
+  // Public sport UUIDs (no auth): baseball=04f53d89, soccer=5b4b60b9
+  // With auth: allSports returns full list including basketball/hockey
+
+  private async fetchStake(): Promise<Map<string, { outcomeName: string; americanOdds: number; betUrl: string; startDate: number }[]>> {
+    const result = new Map<string, { outcomeName: string; americanOdds: number; betUrl: string; startDate: number }[]>();
+
+    try {
+      const creds = await getAnyCredentials('stake');
+      if (!creds) return result;
+
+      // If login = '__token__', password IS the session token (set via browser login flow)
+      let token: string;
+      if (creds.login === '__token__') {
+        token = creds.password;
+      } else {
+        const loginData = await stakeGql({
+          query: `mutation Login($name: String!, $password: String!) {
+            login(name: $name, password: $password) { session { token } }
+          }`,
+          variables: { name: creds.login, password: creds.password },
+        }, '').catch(() => null);
+        const t = loginData?.data?.login?.session?.token as string | undefined;
+        if (!t) { logger.debug('[games] Stake: login failed'); return result; }
+        token = t;
+      }
+
+      // 2. Get full sport list (requires auth — includes basketball, hockey)
+      const sportsData = await stakeGql({ query: '{ allSports { id name slug } }' }, token).catch(() => null);
+      const allSports: { id: string; name: string; slug: string }[] = sportsData?.data?.allSports ?? [];
+
+      // Fall back to confirmed public IDs if allSports returns empty (geo-restricted)
+      const fallback = [
+        { id: '04f53d89-e77a-4c2f-bb9d-2b4095ba6acb', name: 'Baseball', slug: 'baseball' },
+        { id: '5b4b60b9-ed95-41e7-97e3-f33aa172cf12', name: 'Soccer',   slug: 'soccer'   },
+      ];
+      const TARGET_SLUGS = new Set(['basketball', 'ice-hockey', 'baseball', 'soccer']);
+      const sports = (allSports.length > 0 ? allSports : fallback).filter((s) => TARGET_SLUGS.has(s.slug));
+
+      // 3. For each sport, fetch upcoming fixtures with moneyline markets
+      await Promise.all(sports.map(async ({ id, name, slug }) => {
+        const betPath = slug === 'basketball' ? 'basketball/nba'
+          : slug === 'ice-hockey' ? 'ice-hockey/nhl'
+          : slug === 'baseball'   ? 'baseball/mlb'
+          : 'soccer';
+
+        try {
+          const data = await stakeGql({
+            query: `query SportFixtures($sportId: String!) {
+              sport(sportId: $sportId) {
+                fixtureList(limit: 50) {
+                  id name startTime status
+                  markets {
+                    name
+                    outcomes { name odds }
+                  }
+                }
+              }
+            }`,
+            variables: { sportId: id },
+          }, token);
+
+          for (const fixture of data?.data?.sport?.fixtureList ?? []) {
+            const st = ((fixture.status as string) ?? '').toLowerCase();
+            if (st !== 'upcoming' && st !== 'live' && st !== 'pre_match') continue;
+
+            const startDate = fixture.startTime ? new Date(fixture.startTime as string).getTime() : 0;
+            const betUrl = `https://stake.com/sports/${betPath}`;
+
+            // Find the moneyline / match winner market
+            const markets: any[] = fixture.markets ?? [];
+            const ml = markets.find((m: any) => /moneyline|winner|match result/i.test((m.name ?? '') as string)) ?? markets[0];
+            if (!ml) continue;
+
+            const outcomeList: { outcomeName: string; americanOdds: number; betUrl: string; startDate: number }[] = [];
+            for (const o of ml.outcomes ?? []) {
+              const odds = parseFloat((o.odds ?? '0') as string);
+              if (!odds || odds <= 1.01) continue;
+              const outcomeName = ((o.name ?? '') as string).trim();
+              if (!outcomeName) continue;
+              outcomeList.push({ outcomeName, americanOdds: decimalToAmerican(odds), betUrl, startDate });
+            }
+            if (outcomeList.length >= 2) result.set(fixture.id as string, outcomeList);
+          }
+        } catch (err) {
+          logger.debug(`[games] Stake ${name}: ${(err as Error).message}`);
+        }
+      }));
+    } catch (err) {
+      logger.debug(`[games] Stake: ${(err as Error).message}`);
+    }
+
+    logger.debug(`[games] Stake: ${result.size} events`);
+    return result;
+  }
+
+  // ─── SportsInteraction (Kambi CA) ─────────────────────────────────────────
+
+  private async fetchSportsInteraction(): Promise<Map<string, Map<string, number>>> {
+    const result = new Map<string, Map<string, number>>();
+    const KAMBI_BASE = 'https://eu-offering-api.kambi.com/offering/api/v2';
+    const operator = 'sportsinteraction';
+    const sportPaths = ['basketball/nba', 'ice_hockey/nhl', 'baseball/mlb'];
+
+    await Promise.all(sportPaths.map(async (sportPath) => {
+      try {
+        const url = `${KAMBI_BASE}/${operator}/listView/${sportPath}.json?lang=en_US&market=CA&client_id=2&channel_id=1`;
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return;
+        const data = await res.json() as any;
+
+        for (const evt of data.events ?? []) {
+          const ev = evt.event;
+          if (!ev) continue;
+          const start = new Date(ev.start as string);
+          if (start < new Date(Date.now() - 3 * 60 * 60_000)) continue;
+
+          const betOffers: any[] = evt.betOffers ?? [];
+          const ml = betOffers.find((bo: any) => {
+            const typeName = ((bo.betOfferType?.name ?? '') as string).toLowerCase();
+            const criterion = ((bo.criterion?.label ?? '') as string).toLowerCase();
+            return typeName.includes('winner') || criterion.includes('match') || criterion.includes('winner') || criterion.includes('money');
+          });
+          if (!ml) continue;
+
+          const outcomes: any[] = ml.outcomes ?? [];
+          const teamOutcomes: { name: string; american: number }[] = [];
+          for (const o of outcomes) {
+            if ((o.status as string) === 'SUSPENDED') continue;
+            const rawOdds = o.odds as number;
+            if (!rawOdds || rawOdds <= 1010) continue;
+            const american = decimalToAmerican(rawOdds / 1000);
+            const label = ((o.label ?? o.participant ?? '') as string).trim();
+            if (!label) continue;
+            const name = (o.type as string) === 'OT_CROSS' ? 'Draw' : label;
+            teamOutcomes.push({ name, american });
+          }
+
+          if (teamOutcomes.length < 2) continue;
+          const teams = teamOutcomes.filter((o) => o.name !== 'Draw');
+          if (teams.length < 2) continue;
+
+          const k = gameKey(teams[0].name, teams[1].name);
+          if (!result.has(k)) result.set(k, new Map());
+          const outcomeMap = result.get(k)!;
+          for (const o of teamOutcomes) outcomeMap.set(o.name, o.american);
+        }
+      } catch (err) {
+        logger.debug(`[games] SportsInteraction ${sportPath}: ${(err as Error).message}`);
+      }
+    }));
+
+    logger.debug(`[games] SportsInteraction: ${result.size} games`);
+    return result;
+  }
+
+  // ─── PointsBet ─────────────────────────────────────────────────────────────
+
+  private async fetchPointsBet(): Promise<Map<string, Map<string, number>>> {
+    const result = new Map<string, Map<string, number>>();
+    const leagues = [
+      { code: 'nba',  sport: 'Basketball' },
+      { code: 'nhl',  sport: 'Hockey'     },
+      { code: 'mlb',  sport: 'Baseball'   },
+    ];
+
+    await Promise.all(leagues.map(async ({ code }) => {
+      try {
+        const url = `https://api.us.pointsbet.com/api/v2/competitions/${code}/events/featured`;
+        const res = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0', Accept: 'application/json' },
+          signal: AbortSignal.timeout(10_000),
+        });
+        if (!res.ok) return;
+        const data = await res.json() as any;
+
+        for (const ev of data.events ?? []) {
+          if (ev.isSuspended) continue;
+          const evName: string = ev.name ?? '';
+
+          // Parse "Team A vs Team B"
+          const parts = evName.includes(' vs ') ? evName.split(' vs ') : evName.includes(' @ ') ? evName.split(' @ ').reverse() : null;
+          if (!parts || parts.length < 2) continue;
+          const homeName = parts[0]?.trim() ?? '';
+          const awayName = parts[1]?.trim() ?? '';
+          if (!homeName || !awayName) continue;
+
+          const k = gameKey(awayName, homeName);
+          if (!result.has(k)) result.set(k, new Map());
+          const outcomeMap = result.get(k)!;
+
+          // Find moneyline / match result market
+          const matches: any[] = ev.matches ?? ev.specialFixedOddsMarkets ?? [];
+          const ml = matches.find((m: any) => /match result|money line|moneyline|winner/i.test(m.name ?? ''))
+            ?? matches[0];
+          if (!ml) continue;
+
+          for (const o of ml.outcomes ?? []) {
+            if (o.isSuspended) continue;
+            const price = parseFloat(o.price ?? '0');
+            if (!price || price <= 1.01) continue;
+            const american = decimalToAmerican(price);
+            const name = (o.name as string) === 'Draw' ? 'Draw' : (o.name as string);
+            outcomeMap.set(name, american);
+          }
+        }
+      } catch (err) {
+        logger.debug(`[games] PointsBet ${code}: ${(err as Error).message}`);
+      }
+    }));
+
+    logger.debug(`[games] PointsBet: ${result.size} games`);
+    return result;
+  }
 }
 
 let _instance: GamesService | null = null;
 export function getGamesService(): GamesService {
-  if (!_instance) _instance = new GamesService();
+  if (!_instance) {
+    _instance = new GamesService();
+    _instance.startBackgroundRefresh();
+  }
   return _instance;
 }

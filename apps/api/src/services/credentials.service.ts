@@ -19,8 +19,21 @@ function decrypt(stored: string): string {
   return decipher.update(Buffer.from(encHex, 'hex')) + decipher.final('utf8');
 }
 
-export const SUPPORTED_BOOKS = ['kalshi', 'pinnacle', 'stake', 'betway'] as const;
+export const SUPPORTED_BOOKS = ['kalshi', 'pinnacle', 'pinnacle_cookies', 'stake', 'betway', 'bet365', 'sportsinteraction', 'polymarket', 'draftkings', 'fanduel', 'betmgm', 'caesars'] as const;
 export type SupportedBook = typeof SUPPORTED_BOOKS[number];
+
+// Fetch ANY stored credentials for a book (used by odds fetcher — odds are public, just need auth)
+export async function getAnyCredentials(bookmaker: SupportedBook): Promise<{ login: string; password: string } | null> {
+  const res = await query(
+    `SELECT encrypted_login, encrypted_password FROM bookmaker_credentials WHERE bookmaker = $1 AND is_active = true LIMIT 1`,
+    [bookmaker],
+  );
+  if (!res.rows[0]) return null;
+  return {
+    login: decrypt(res.rows[0].encrypted_login),
+    password: decrypt(res.rows[0].encrypted_password),
+  };
+}
 
 export async function saveCredentials(userId: string, bookmaker: SupportedBook, login: string, password: string) {
   const encLogin = encrypt(login);

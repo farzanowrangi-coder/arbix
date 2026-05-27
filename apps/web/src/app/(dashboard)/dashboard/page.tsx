@@ -147,7 +147,7 @@ export default function DashboardPage() {
 
   useEffect(() => {
     fetchGameArbs();
-    const t = setInterval(fetchGameArbs, 60_000);
+    const t = setInterval(fetchGameArbs, 15_000);
     return () => clearInterval(t);
   }, [fetchGameArbs]);
 

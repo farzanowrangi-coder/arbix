@@ -23,6 +23,7 @@ export function useWebSocket() {
     setConnectionStatus,
     setLiveMatch,
     setLiveArbitrageOpportunity,
+    setGamesData,
   } = useOpportunityStore();
   const { addNotification } = useNotificationStore();
 
@@ -122,6 +123,12 @@ export function useWebSocket() {
             break;
           }
 
+          case 'games:update': {
+            const games = data.payload as any[];
+            if (Array.isArray(games)) setGamesData(games);
+            break;
+          }
+
           case 'pong':
             break;
 
@@ -151,7 +158,7 @@ export function useWebSocket() {
       setConnectionStatus('error');
       ws.close();
     };
-  }, [addOrUpdateOpportunity, removeOpportunity, setScannerStatus, setConnectionStatus, addNotification, clearTimers, setLiveMatch, setLiveArbitrageOpportunity, pushBrowserNotif]);
+  }, [addOrUpdateOpportunity, removeOpportunity, setScannerStatus, setConnectionStatus, addNotification, clearTimers, setLiveMatch, setLiveArbitrageOpportunity, setGamesData, pushBrowserNotif]);
 
   const disconnect = useCallback(() => {
     clearTimers();

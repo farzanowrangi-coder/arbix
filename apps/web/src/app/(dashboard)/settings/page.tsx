@@ -209,22 +209,48 @@ export default function SettingsPage() {
             )}
           </div>
 
-          {subStatus?.tier === 'free' && (
-            <div className="space-y-2">
-              <div className="text-2xs text-text-muted mb-3">Upgrade to unlock full access</div>
-              {(['basic', 'pro'] as const).map((tier) => (
+          {subStatus?.tier !== 'pro' && (
+            <div className="space-y-3 pt-1">
+              <div className="text-2xs text-text-muted">Upgrade to unlock full access</div>
+
+              {subStatus?.tier === 'free' && (
+                <div className="border border-border rounded p-3 space-y-2">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-text-primary">Basic</span>
+                    <span className="text-xs font-bold text-text-primary">$29<span className="text-text-muted font-normal">/mo</span></span>
+                  </div>
+                  <ul className="text-2xs text-text-muted space-y-1">
+                    <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> Dashboard</li>
+                    <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> Arbitrage Opportunities</li>
+                    <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> History, Portfolio, Calculator</li>
+                  </ul>
+                  <button
+                    onClick={() => upgradePlan('basic')}
+                    className="w-full py-1.5 rounded text-xs font-bold border border-border text-text-primary hover:border-green-arb/40 transition-colors"
+                  >
+                    Upgrade to Basic
+                  </button>
+                </div>
+              )}
+
+              <div className="border border-green-arb/30 rounded p-3 space-y-2 bg-green-arb/5">
+                <div className="flex items-center justify-between">
+                  <span className="text-xs font-bold text-green-arb">Pro</span>
+                  <span className="text-xs font-bold text-text-primary">$149<span className="text-text-muted font-normal">/mo</span></span>
+                </div>
+                <ul className="text-2xs text-text-muted space-y-1">
+                  <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> Everything in Basic</li>
+                  <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> Best Odds comparison across all books</li>
+                  <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> Auto-Bettor with real-time execution</li>
+                  <li className="flex items-center gap-1.5"><span className="text-green-arb">✓</span> Live Matches tracker</li>
+                </ul>
                 <button
-                  key={tier}
-                  onClick={() => upgradePlan(tier)}
-                  className={`w-full py-2 rounded text-sm font-bold transition-colors ${
-                    tier === 'pro'
-                      ? 'bg-green-arb text-terminal hover:bg-green-arb-dim shadow-neon-green'
-                      : 'border border-border text-text-primary hover:border-green-arb/40'
-                  }`}
+                  onClick={() => upgradePlan('pro')}
+                  className="w-full py-1.5 rounded text-xs font-bold bg-green-arb text-terminal hover:bg-green-arb/90 transition-colors shadow-neon-green"
                 >
-                  Upgrade to {tier.charAt(0).toUpperCase() + tier.slice(1)} {tier === 'basic' ? '— $29/mo' : '— $99/mo'}
+                  Upgrade to Pro — $149/mo
                 </button>
-              ))}
+              </div>
             </div>
           )}
         </div>

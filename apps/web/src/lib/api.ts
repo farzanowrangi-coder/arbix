@@ -256,6 +256,7 @@ export interface GameOutcome {
   name: string;
   books: BookOdds[];
   bestBook: string;
+  bestBookLabel: string;
   bestDecimalOdds: number;
   bestAmericanOdds: number;
 }
@@ -327,20 +328,28 @@ export const credentialsApi = {
 // ─── Auto-Bet ─────────────────────────────────────────────────────────────────
 
 export const autoBetApi = {
-  getSettings: async () => {
-    const res = await apiClient.get<ApiResponse<any>>('/auto-bet/settings');
+  getSettings: async (mode: 'live' | 'demo') => {
+    const res = await apiClient.get<ApiResponse<any>>(`/auto-bet/settings?mode=${mode}`);
     return res.data;
   },
-  saveSettings: async (settings: any) => {
-    const res = await apiClient.put<ApiResponse<any>>('/auto-bet/settings', settings);
+  saveSettings: async (settings: any, mode: 'live' | 'demo') => {
+    const res = await apiClient.put<ApiResponse<any>>(`/auto-bet/settings?mode=${mode}`, settings);
     return res.data;
   },
-  getHistory: async () => {
-    const res = await apiClient.get<ApiResponse<any[]>>('/auto-bet/history');
+  getHistory: async (mode: 'live' | 'demo') => {
+    const res = await apiClient.get<ApiResponse<any[]>>(`/auto-bet/history?mode=${mode}`);
     return res.data;
   },
-  getStats: async () => {
-    const res = await apiClient.get<ApiResponse<any>>('/auto-bet/stats');
+  getStats: async (mode: 'live' | 'demo') => {
+    const res = await apiClient.get<ApiResponse<any>>(`/auto-bet/stats?mode=${mode}`);
+    return res.data;
+  },
+  getDailyPnl: async (mode: 'live' | 'demo', days = 30) => {
+    const res = await apiClient.get<ApiResponse<any>>(`/auto-bet/daily-pnl?mode=${mode}&days=${days}`);
+    return res.data;
+  },
+  getBookBalances: async () => {
+    const res = await apiClient.get<ApiResponse<{ polymarket: number | null; pinnacle: number | null }>>('/auto-bet/book-balances');
     return res.data;
   },
 };

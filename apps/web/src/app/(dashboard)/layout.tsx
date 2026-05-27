@@ -9,17 +9,25 @@ import { useWebSocket } from '@/hooks/useWebSocket';
 import { getAccessToken } from '@/lib/auth';
 import { OddsFormatProvider } from '@/context/OddsFormatContext';
 
+type Tier = 'free' | 'basic' | 'pro';
+
 const NAV = [
-  { href: '/dashboard',     label: 'Dashboard',    icon: '◈' },
-  { href: '/games',         label: 'Best Odds',    icon: '⊕' },
-  { href: '/live',          label: 'Live Matches', icon: '▶' },
-  { href: '/opportunities', label: 'Opportunities', icon: '◉' },
-  { href: '/auto-bet',      label: 'Auto-Bettor',  icon: '◉' },
-  { href: '/calculator',    label: 'Calculator',   icon: '◆' },
-  { href: '/history',       label: 'History',      icon: '◎' },
-  { href: '/portfolio',     label: 'Portfolio',    icon: '◍' },
-  { href: '/settings',      label: 'Settings',     icon: '◐' },
+  { href: '/dashboard',     label: 'Dashboard',     icon: '◈', tier: 'free'  as Tier },
+  { href: '/opportunities', label: 'Opportunities', icon: '◉', tier: 'basic' as Tier },
+  { href: '/games',         label: 'Best Odds',     icon: '⊕', tier: 'pro'   as Tier },
+  { href: '/live',          label: 'Live Matches',  icon: '▶', tier: 'pro'   as Tier },
+  { href: '/auto-bet',      label: 'Auto-Bettor',   icon: '◉', tier: 'pro'   as Tier },
+  { href: '/calculator',    label: 'Calculator',    icon: '◆', tier: 'free'  as Tier },
+  { href: '/history',       label: 'History',       icon: '◎', tier: 'free'  as Tier },
+  { href: '/portfolio',     label: 'Portfolio',     icon: '◍', tier: 'free'  as Tier },
+  { href: '/settings',      label: 'Settings',      icon: '◐', tier: 'free'  as Tier },
 ];
+
+const TIER_RANK: Record<Tier, number> = { free: 0, basic: 1, pro: 2 };
+
+function hasAccess(required: Tier, userTier: Tier): boolean {
+  return TIER_RANK[userTier] >= TIER_RANK[required];
+}
 
 export default function DashboardLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -60,25 +68,34 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
         {/* Nav */}
         <nav className="flex-1 py-4 px-2">
           {NAV.map((item) => {
-            const active = pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href));
+            const userTier = (user?.subscriptionTier ?? 'free') as Tier;
+            const accessible = hasAccess(item.tier, userTier);
+            const active = accessible && (pathname === item.href || (item.href !== '/dashboard' && pathname.startsWith(item.href)));
             return (
               <Link
                 key={item.href}
-                href={item.href}
+                href={accessible ? item.href : '/settings'}
                 className={`flex items-center gap-2.5 px-3 py-2 rounded text-xs mb-1 transition-colors ${
                   active
                     ? 'bg-green-arb/10 text-green-arb border-l-2 border-green-arb'
-                    : 'text-text-secondary hover:text-text-primary hover:bg-white/5'
+                    : accessible
+                    ? 'text-text-secondary hover:text-text-primary hover:bg-white/5'
+                    : 'text-text-muted/40 cursor-pointer'
                 }`}
               >
                 <span>{item.icon}</span>
                 <span>{item.label}</span>
-                {item.label === 'Opportunities' && liveCount > 0 && (
+                {!accessible && (
+                  <span className="ml-auto text-2xs border border-border/50 text-text-muted/50 px-1 py-0.5 rounded font-mono">
+                    {item.tier.toUpperCase()}
+                  </span>
+                )}
+                {accessible && item.label === 'Opportunities' && liveCount > 0 && (
                   <span className="ml-auto text-2xs bg-green-arb text-terminal px-1.5 py-0.5 rounded-full font-bold">
                     {liveCount}
                   </span>
                 )}
-                {item.label === 'Live Matches' && liveMatchCount > 0 && (
+                {accessible && item.label === 'Live Matches' && liveMatchCount > 0 && (
                   <span className={`ml-auto text-2xs px-1.5 py-0.5 rounded-full font-bold ${liveArbCount > 0 ? 'bg-yellow-arb text-terminal animate-pulse' : 'bg-red-500 text-white'}`}>
                     {liveMatchCount}
                   </span>
@@ -163,7 +180,32 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             transition={{ duration: 0.2 }}
             className="h-full"
           >
-            {children}
+            {(() => {
+              const userTier = (user?.subscriptionTier ?? 'free') as Tier;
+              const currentNav = NAV.find((n) => pathname === n.href || (n.href !== '/dashboard' && pathname.startsWith(n.href)));
+              if (currentNav && !hasAccess(currentNav.tier, userTier)) {
+                return (
+                  <div className="flex flex-col items-center justify-center h-full gap-6 text-center px-8">
+                    <div className="text-4xl text-border">◧</div>
+                    <div>
+                      <div className="text-sm font-bold text-text-primary mb-1">{currentNav.label} requires {currentNav.tier === 'pro' ? 'Pro' : 'Basic'}</div>
+                      <div className="text-2xs text-text-muted max-w-xs">
+                        {currentNav.tier === 'pro'
+                          ? 'Upgrade to Pro ($149/mo) to access Best Odds comparisons and the Auto-Bettor.'
+                          : 'Upgrade to Basic to access this section.'}
+                      </div>
+                    </div>
+                    <Link
+                      href="/settings"
+                      className="text-xs bg-green-arb text-terminal font-bold px-5 py-2 rounded hover:bg-green-arb/90 transition-colors shadow-neon-green"
+                    >
+                      View Plans
+                    </Link>
+                  </div>
+                );
+              }
+              return children;
+            })()}
           </motion.div>
         </main>
       </div>

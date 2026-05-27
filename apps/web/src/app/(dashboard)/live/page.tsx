@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { LiveMatch, LiveArbitrageOpportunity } from '@arbix/shared';
 import { useOpportunityStore } from '@/store';
@@ -149,6 +149,17 @@ export default function LivePage() {
   const [opportunities, setOpportunities] = useState<LiveArbitrageOpportunity[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
+  const [secondsAgo, setSecondsAgo] = useState(0);
+  const lastUpdatedRef = useRef<Date | null>(null);
+
+  useEffect(() => { lastUpdatedRef.current = lastUpdated; }, [lastUpdated]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      setSecondsAgo(lastUpdatedRef.current ? Math.round((Date.now() - lastUpdatedRef.current.getTime()) / 1000) : 0);
+    }, 1000);
+    return () => clearInterval(t);
+  }, []);
 
   const fetchData = useCallback(async () => {
     try {
@@ -167,7 +178,7 @@ export default function LivePage() {
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(fetchData, 30_000);
+    const interval = setInterval(fetchData, 15_000);
     return () => clearInterval(interval);
   }, [fetchData]);
 
@@ -206,8 +217,8 @@ export default function LivePage() {
           </p>
         </div>
         {lastUpdated && (
-          <span className="text-2xs text-text-muted">
-            Updated {lastUpdated.toLocaleTimeString()}
+          <span className={`text-2xs ${secondsAgo <= 5 ? 'text-green-arb' : secondsAgo <= 15 ? 'text-text-muted' : 'text-yellow-arb'}`}>
+            {secondsAgo === 0 ? 'just now' : `${secondsAgo}s ago`}
           </span>
         )}
       </div>

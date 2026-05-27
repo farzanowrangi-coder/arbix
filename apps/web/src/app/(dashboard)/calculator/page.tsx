@@ -214,7 +214,7 @@ function LiveGameCalculator() {
 
   useEffect(() => {
     fetchGames();
-    const t = setInterval(fetchGames, 60_000);
+    const t = setInterval(fetchGames, 15_000);
     return () => clearInterval(t);
   }, [fetchGames]);
 

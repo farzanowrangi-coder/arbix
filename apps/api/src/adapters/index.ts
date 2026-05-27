@@ -37,6 +37,8 @@ export const ADAPTER_REGISTRY: Record<BookmakerSlug, AdapterConstructor | null> 
   stake: StakeAdapter,
   betway: BetwayAdapter,
   betrivers: null,
+  pointsbet: null,
+  sportsinteraction: null,
   bovada: null,
   mybookie: null,
   betonline: null,

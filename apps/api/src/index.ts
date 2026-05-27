@@ -44,6 +44,13 @@ async function buildApp() {
   await app.register(fastifyRateLimit, {
     max: config.rateLimit.max,
     timeWindow: config.rateLimit.windowMs,
+    // Auth routes get a separate generous limit — never lock out a login attempt
+    keyGenerator: (req) => {
+      const path = req.url ?? '';
+      if (path.startsWith('/auth/')) return `auth:${req.ip}`;
+      return req.ip;
+    },
+    allowList: ['127.0.0.1', '::1', '::ffff:127.0.0.1'], // never rate-limit localhost
     errorResponseBuilder: () => ({
       success: false,
       error: 'Too many requests — slow down',
@@ -72,6 +79,17 @@ async function buildApp() {
 
   // Wire scanner events to WebSocket broadcasts
   scanner.on('ws:broadcast', (event) => wsManager.broadcast(event));
+
+  // Wire GamesService background refresh → push fresh games/odds to all clients
+  const gamesSvc = (await import('./services/games.service')).getGamesService();
+  const origRefresh = (gamesSvc as any).refreshCache.bind(gamesSvc);
+  (gamesSvc as any).refreshCache = async () => {
+    await origRefresh();
+    const cached = (gamesSvc as any).cache;
+    if (cached?.data) {
+      wsManager.broadcast({ type: 'games:update', payload: cached.data, timestamp: new Date().toISOString() });
+    }
+  };
 
   // ─── Routes ─────────────────────────────────────────────────────────────────
 

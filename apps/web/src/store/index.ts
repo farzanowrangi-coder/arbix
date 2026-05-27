@@ -99,6 +99,11 @@ interface OpportunityState {
   liveArbitrageOpportunities: LiveArbitrageOpportunity[];
   setLiveMatch: (match: LiveMatch) => void;
   setLiveArbitrageOpportunity: (opp: LiveArbitrageOpportunity) => void;
+
+  // Best Odds (games) — pushed by WS every 10s
+  gamesData: any[] | null;
+  gamesUpdatedAt: Date | null;
+  setGamesData: (data: any[]) => void;
 }
 
 const defaultFilters: ArbitrageFilter = {
@@ -116,6 +121,8 @@ export const useOpportunityStore = create<OpportunityState>()(
       connectionStatus: 'disconnected',
       liveMatches: [],
       liveArbitrageOpportunities: [],
+      gamesData: null,
+      gamesUpdatedAt: null,
 
       setLiveOpportunities: (opportunities) =>
         set({ liveOpportunities: opportunities, lastUpdateAt: new Date() }),
@@ -172,6 +179,8 @@ export const useOpportunityStore = create<OpportunityState>()(
           }
           return { liveArbitrageOpportunities: [opp, ...state.liveArbitrageOpportunities] };
         }),
+
+      setGamesData: (data) => set({ gamesData: data, gamesUpdatedAt: new Date() }),
     }),
     { name: 'OpportunityStore' },
   ),
